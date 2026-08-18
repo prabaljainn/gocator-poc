@@ -28,3 +28,6 @@ zstd-compressed npz (~15–25 MB/frame, ~1–2 GB per pass). Any session is fore
 
 ## D9 — Manual ground-truth matching (2026-08-19)
 Tap a detected head in the UI, assign plant tag + caliper mm. No auto-matching in v1 — validation numbers must be unambiguous.
+
+## D10 — No simulated frame source (2026-08-19)
+Dropped the planned `FakeLiveSource` (session replayed on a real-time timer). Challenged by prabal: the sensor is on the bench, and `ReplaySource` already feeds *real* captured data through the identical recorder → detector → store → WS → UI path. A timer-paced fake would only add a class to maintain and would still not exercise the one thing it claims to de-risk — GoSDK acquisition. Backend development uses `ReplaySource`; acquisition is proven against the real sensor. Reopen if: CI ever needs deterministic timing-sensitive tests that recorded sessions can't provide.

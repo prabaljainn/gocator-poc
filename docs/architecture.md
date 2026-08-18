@@ -44,10 +44,11 @@ class FrameSource(Protocol):
 
 | Implementation | Backed by | Purpose |
 |---|---|---|
-| `ReplaySource` | `rec_reader.py` (exists) | Offline analysis of sensor `.rec` files |
+| `ReplaySource` | `rec_reader.py` (exists) | Offline analysis of `.rec` files — **also the development source**: real sensor data through the real code path |
 | `LiveSource` | C shim + ctypes | Field acquisition |
 | `SessionSource` | recorded session dir | Re-run any past session through improved detectors |
-| `FakeLiveSource` | `SessionSource` + real-time pacing | Rehearse the full live UX with no sensor attached |
+
+No simulated source exists. `ReplaySource` is real captured data, so a timer-paced fake would add a class to maintain and prove nothing extra (D10).
 
 This boundary is the promise that Approach A → Approach B (split acquisition daemon) later is a process split, not a rewrite: `LiveSource` becomes an IPC client and nothing else changes.
 
@@ -208,7 +209,7 @@ Phone-first layout for Live (you'll hold a phone in the field); desktop-first fo
 - `detect.py --selftest` stays the core's guard (synthetic 200 mm disc, < 5 % error).
 - **Golden replay test**: `ReplaySource` over committed downsampled fixture frames must reproduce known head counts/diameters — the regression net for any detector change.
 - Unit: recorder round-trip (write → `SessionSource` read → identical arrays), store queries, validation math.
-- **Rehearsal mode**: `FakeLiveSource` drives the full stack at real cadence — run the entire field-day UX on a desk, no sensor, before the actual campaign.
+- **Full-stack check**: a `ReplaySource` session drives recorder → detector → store → WS → UI end to end with real data; only acquisition is untested until the sensor streams.
 - C shim tested against the Gocator emulator/accelerator (in repo: `Emulator and Accelerator/`) before first field connection.
 
 ## What v1 deliberately does not do
