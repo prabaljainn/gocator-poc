@@ -120,3 +120,21 @@ To stream what the pipeline expects: web UI → **Scan → Mode → Surface** (w
 `command.cgi?id=4103` ignores `Range:` headers: a `Range: bytes=0-1023` request returns **`HTTP/1.1 200` with `Transfer-Encoding: chunked`**, not `206 Partial Content`, and no `Accept-Ranges`. Every poll therefore re-downloads the entire buffer (164 MB when measured), so there is no incremental "read only what's new" path over HTTP.
 
 That settles the routing: **live, frame-by-frame acquisition must come from GoSDK on TCP 3196.** The HTTP download stays what it is — a way to pull real captured data without the SDK, useful for development and as a field backup.
+
+## ⚠️ Probing caution — the sensor crashed during this reverse-engineering
+
+The sensor's own log recorded:
+
+```
+19/08/2026, 03:01:35  Sensor was restarted due to software detecting a crash.
+                      Please immediately save a Support file and notify LMI support.
+19/08/2026, 04:05:11  Processing drops detected.
+```
+
+The 03:01 crash coincides with this endpoint mapping — repeated full-buffer `_live.rec` downloads (164 MB each), TCP probes across 3190/3192/3196, and WebSocket connects with and without the required subprotocol. **Assume the probing contributed to it.** Nothing here was destructive (all reads), but undocumented endpoints are not hardened against unexpected clients.
+
+Rules going forward:
+- Do **not** poll `command.cgi?id=4103` on a loop. It re-downloads the entire buffer every call (no Range support) and is the heaviest thing we can ask of the sensor.
+- Do **not** open `/ws/*` without the `binary` subprotocol, and close sockets when finished.
+- Prefer GoSDK for anything repeated — it is the interface the firmware is tested against.
+- If a crash recurs: web UI → Manage → save a **Support file** immediately, then send it to LMI. "Processing drops detected" is separate and usually means the sensor is running near its throughput ceiling for its current settings.
