@@ -1,0 +1,30 @@
+# Decision Log
+
+Short ADRs, newest last. Each entry: what we chose, why, and what would reopen it.
+
+## D1 — Parse .rec directly instead of using the emulator (2026-08-19)
+The Windows-only emulator/SDK route was the documented path; instead we reverse-engineered the frame layout ([rec-format.md](rec-format.md)) and read the file with numpy memmap. Zero external tooling, seconds to open 1.7 GB, works on any OS. Reopen if: LMI changes the recording container in a future firmware.
+
+## D2 — Texture matched filter over brightness/shape detection (2026-08-19)
+Three approaches failed first (Otsu brightness → fragmentation; contour + inscribed circle → C-ring breaks; convex hull → leaf merge). Chosen detector: local-σ texture map, then "largest circle ≥ 55 % full of texture" per location, NMS, 1 px radius refinement, gates on valid-data fraction and mean texture. 55/55 verified true positives on the Tobetsu recording. Reopen if: a crop/season where seed-disc texture is absent (very early buds) becomes a target.
+
+## D3 — Diameter is anchored to the X axis only (2026-08-19)
+The recording is time-triggered; Y distances assume constant rig speed. X is optically calibrated. All mm conversions use X spacing. Reopen if: an encoder is added to the rig (then Y becomes trustworthy and 2-axis measures are fine).
+
+## D4 — v1 live system is a validation-campaign tool (2026-08-19)
+Purpose: prove pipeline vs caliper ground truth in one field day. Operational features (trends, fleet, auth) deliberately out. Reopen after: the campaign produces an acceptable MAE.
+
+## D5 — Approach A: single Python service + thin C shim (2026-08-19)
+One FastAPI process on the DGX Spark; GoSDK lives behind a ~100-line C ring-buffer shim polled via ctypes. Chosen over a split C daemon (Approach B) for build speed; the `FrameSource` interface keeps A→B a process split, not a rewrite. Raw frame is written to disk **before** detection — a detector crash cannot lose field data. Reopen if: the rig goes operational and capture must survive service crashes.
+
+## D6 — DGX Spark is the v1 edge box (2026-08-19)
+Already owned, ARM64 Linux (GoSDK supported), field-portable with a battery station. Jetson Orin is the later operational target — same architecture, same build. GoSDK has no macOS build, so the MacBook is viewer/dev only.
+
+## D7 — React + Vite frontend (2026-08-19)
+User decision: the UI is the seed of the operational product, worth the toolchain. Tailwind for styling. Phone-first Live page, desktop-first Session review.
+
+## D8 — Record full raw frames every session (2026-08-19)
+zstd-compressed npz (~15–25 MB/frame, ~1–2 GB per pass). Any session is forever re-runnable through improved detectors; disk on the Spark makes this free. Sensor-side .rec recording may be armed as an independent backup during the campaign.
+
+## D9 — Manual ground-truth matching (2026-08-19)
+Tap a detected head in the UI, assign plant tag + caliper mm. No auto-matching in v1 — validation numbers must be unambiguous.
