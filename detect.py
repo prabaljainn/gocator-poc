@@ -20,18 +20,23 @@ PX_MM = rr.DX_MM * DS               # isotropic mm/px after Y-rescale (~0.50mm)
 MIN_DIA_MM, MAX_DIA_MM = 50.0, 350.0   # disc-only diameters run smaller than full heads
 
 
-def preprocess(z16, inten):
-    """Downsample, resample to isotropic mm/px, median-despike. Returns z_mm, i, valid."""
+def preprocess(z16, inten, dx_mm=rr.DX_MM, dy_mm=rr.DY_MM, z_res_mm=rr.ZRES_MM):
+    """Downsample, resample to isotropic mm/px, median-despike.
+
+    Resolutions are arguments because live frames report their own (the sensor's
+    active-area settings change them); assuming the recording's constants would
+    silently scale every live diameter. Returns (z_mm, i, valid, px_mm).
+    """
     z = z16[::DS, ::DS].astype(np.float32)
     i = inten[::DS, ::DS]
-    new_h = int(round(z.shape[0] * DS * rr.DY_MM / (rr.DX_MM * DS)))
+    new_h = int(round(z.shape[0] * dy_mm / dx_mm))
     z = cv2.resize(z, (z.shape[1], new_h), interpolation=cv2.INTER_NEAREST)
     i = cv2.resize(i, (i.shape[1], new_h), interpolation=cv2.INTER_NEAREST)
     valid = z != float(rr.INVALID)
     z = cv2.medianBlur(z, 5)                       # kills laser speckle spikes
     valid &= z != float(rr.INVALID)
-    z_mm = np.where(valid, z * rr.ZRES_MM, np.nan)
-    return z_mm, i, valid
+    z_mm = np.where(valid, z * z_res_mm, np.nan)
+    return z_mm, i, valid, dx_mm * DS
 
 
 TEX_WIN = 9        # local-std window (seed cells are ~4-10px at 0.5mm/px)
@@ -55,7 +60,7 @@ def _refine_radius(texbin, cx, cy, r_coarse, step=8):
     return best
 
 
-def find_heads(z_mm, i, valid):
+def find_heads(z_mm, i, valid, px_mm=PX_MM):
     """Matched filter: the largest circle >=FILL_THR full of seed texture is a disc.
 
     Heads read as SOLID high-texture discs; leaves only show texture at thin
@@ -71,8 +76,8 @@ def find_heads(z_mm, i, valid):
     tex[~valid] = 0
     texbin = (tex > TEX_THR).astype(np.float32)
 
-    r_min = int(MIN_DIA_MM / 2 / PX_MM)
-    r_max = int(min(MAX_DIA_MM, 200.0) / 2 / PX_MM)   # discs top out well under 20cm
+    r_min = int(MIN_DIA_MM / 2 / px_mm)
+    r_max = int(min(MAX_DIA_MM, 200.0) / 2 / px_mm)   # discs top out well under 20cm
     best_r = np.zeros(texbin.shape, np.float32)
     best_fill = np.zeros(texbin.shape, np.float32)
     for r in range(r_min, r_max + 1, 8):
@@ -105,8 +110,8 @@ def find_heads(z_mm, i, valid):
         truncated = (cx_i < edge or cy_i < edge or
                      cx_i > texbin.shape[1] - edge or cy_i > texbin.shape[0] - edge)
         heads.append({
-            "cx_mm": cx_i * PX_MM, "cy_mm": cy_i * PX_MM,
-            "dia_mm": 2 * r * PX_MM,                # matched-filter circle = disc diameter
+            "cx_mm": cx_i * px_mm, "cy_mm": cy_i * px_mm,
+            "dia_mm": 2 * r * px_mm,                # matched-filter circle = disc diameter
             "valid_frac": valid_frac, "tex_in": tex_in,
             "height_mm": mean_h, "truncated": truncated,
             "accepted": valid_frac >= 0.70 and tex_in >= MIN_MEAN_TEX,
@@ -148,8 +153,8 @@ def run(rec_path, frames=None, out_dir="out"):
     rows, tiles = [], []
     for k in frames:
         z16, inten = rr.read_frame(rec_path, ends[k])
-        z_mm, i, valid = preprocess(z16, inten)
-        heads = find_heads(z_mm, i, valid)
+        z_mm, i, valid, px_mm = preprocess(z16, inten)
+        heads = find_heads(z_mm, i, valid, px_mm)
         cv2.imwrite(f"{out_dir}/overlay_{k:02d}.png", overlay(i, heads))
         for h in heads:
             rows.append({"frame": k, **{k2: (round(v, 1) if isinstance(v, float) else v)
@@ -188,8 +193,8 @@ def selftest():
     inten[disc] = rng.integers(40, 240, int(disc.sum()))  # seed-like speckle texture
     inten[~disc] = 30                                     # smooth background, zero texture
     z16[~disc] = 1000
-    z_mm, i, valid = preprocess(z16, inten)
-    heads = [h for h in find_heads(z_mm, i, valid) if h["accepted"]]
+    z_mm, i, valid, px_mm = preprocess(z16, inten)
+    heads = [h for h in find_heads(z_mm, i, valid, px_mm) if h["accepted"]]
     assert len(heads) == 1, f"expected 1 head, got {len(heads)}"
     err = abs(heads[0]["dia_mm"] - dia_mm) / dia_mm
     assert err < 0.05, f"diameter {heads[0]['dia_mm']:.1f} vs {dia_mm} ({err:.1%})"

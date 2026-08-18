@@ -31,3 +31,12 @@ Tap a detected head in the UI, assign plant tag + caliper mm. No auto-matching i
 
 ## D10 — No simulated frame source (2026-08-19)
 Dropped the planned `FakeLiveSource` (session replayed on a real-time timer). Challenged by prabal: the sensor is on the bench, and `ReplaySource` already feeds *real* captured data through the identical recorder → detector → store → WS → UI path. A timer-paced fake would only add a class to maintain and would still not exercise the one thing it claims to de-risk — GoSDK acquisition. Backend development uses `ReplaySource`; acquisition is proven against the real sensor. Reopen if: CI ever needs deterministic timing-sensitive tests that recorded sessions can't provide.
+
+## D11 — GoSDK via ctypes, not a C shim (2026-08-19)
+`backend/app/gosdk.py` binds libGoSdk/libkApi directly with ctypes instead of the C ring-buffer shim the original design called for. The SDK is a plain C API, so a shim would add a build step and a second place for bugs while buying nothing — Python already copies each row out of SDK memory before the message is destroyed. Supersedes the shim in architecture.md. Reopen if: acquisition ever needs to outlive the Python process, or per-frame copy cost shows up in profiling.
+
+## D12 — Detector takes pixel size as an argument (2026-08-19)
+`preprocess()` / `find_heads()` accept `dx_mm`/`dy_mm`/`px_mm` rather than reading `rec_reader`'s constants. Live frames report their own resolution (0.1278mm X on the bench vs 0.124mm in the Tobetsu file — it moves with the sensor's active-area settings), so hardcoding the recording's value would silently mis-scale every live diameter by ~3%.
+
+## D13 — Live capture requires relative motion (2026-08-19, physical constraint)
+The sensor is time-triggered, so a stationary object produces an identical profile every row: the surface is a smear along Y, not a picture, and no detector can recover a disc from it. Confirmed on the bench — live frames arrived correctly but showed vertical stripes. Either the object or the sensor must move during a surface. Surface length is set to 600mm (~3s at ~890Hz) to leave time for a hand sweep. Diameters stay anchored to X (D3), which is unaffected by sweep-speed variation; Y is not trustworthy under a hand sweep.

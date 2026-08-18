@@ -67,8 +67,13 @@ class SessionRunner:
 
                 # 2. detect; a failure costs this frame's results, never the frame
                 try:
-                    z_mm, inten, valid = detect.preprocess(frame.z16, frame.intensity)
-                    heads = detect.find_heads(z_mm, inten, valid)
+                    # live frames carry their own resolution; replay falls back
+                    # to the recording's constants
+                    z_mm, inten, valid, px_mm = detect.preprocess(
+                        frame.z16, frame.intensity,
+                        **{k: v for k, v in (("dx_mm", frame.dx_mm),
+                                             ("dy_mm", frame.dy_mm)) if v})
+                    heads = detect.find_heads(z_mm, inten, valid, px_mm)
                     self.recorder.save_overlay(frame.idx, detect.overlay(inten, heads))
                     # numpy scalars aren't JSON-serialisable; without this the first
                     # frame carrying heads kills the WebSocket send (and the client).

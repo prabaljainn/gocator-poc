@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .pipeline import SessionRunner
-from .sources import ReplaySource, SessionSource
+from .sources import LiveSource, ReplaySource, SessionSource
 from .store import Store
 
 log = logging.getLogger("gocator")
@@ -145,9 +145,10 @@ def start_session(req: StartSession):
         if not d.is_dir():
             raise HTTPException(404, f"no such session dir: {req.source}")
         src = SessionSource(d)
+    elif req.mode == "live":
+        src = LiveSource(req.source or SENSOR_IP)
     else:
-        raise HTTPException(400, f"unsupported mode {req.mode!r} "
-                                 "(live acquisition needs GoSDK — docs/setup-dgx.md)")
+        raise HTTPException(400, f"unsupported mode {req.mode!r}")
     name = f"{datetime.now().strftime('%Y-%m-%d_%H%M%S')}_{req.mode}"
     current = SessionRunner(store, src, DATA_ROOT, name, req.mode, req.notes, hub.emit)
     current.start()
