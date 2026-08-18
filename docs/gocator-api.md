@@ -114,3 +114,9 @@ Observed on the bench sensor 2026-08-19:
 ⚠️ **`Profiles` means the sensor is in Profile mode, not Surface mode.** A profile is a single laser cross-section; our detector needs **Surfaces** (the stacked 2D heightmap + intensity, `GvSurfaceMsg`), which is what the Tobetsu `.rec` contains.
 
 To stream what the pipeline expects: web UI → **Scan → Mode → Surface** (with the fixed-length 600 mm setting used in the field), then re-check **Output → Ethernet → Data**, which will then offer **Surfaces** and **Surface Intensity** — both must be checked. Intensity is not optional here: the detector keys entirely on the intensity texture map.
+
+### Can the HTTP download be used as a live stream? No — tested.
+
+`command.cgi?id=4103` ignores `Range:` headers: a `Range: bytes=0-1023` request returns **`HTTP/1.1 200` with `Transfer-Encoding: chunked`**, not `206 Partial Content`, and no `Accept-Ranges`. Every poll therefore re-downloads the entire buffer (164 MB when measured), so there is no incremental "read only what's new" path over HTTP.
+
+That settles the routing: **live, frame-by-frame acquisition must come from GoSDK on TCP 3196.** The HTTP download stays what it is — a way to pull real captured data without the SDK, useful for development and as a field backup.

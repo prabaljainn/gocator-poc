@@ -93,3 +93,30 @@ The trigger is time-based (~994 Hz, fixed 600 mm surfaces), so surfaces complete
 | SDK build fails | wrong platform makefile → use `Linux_Arm64`; build kApi before GoSdk |
 | Dashboard unreachable from Mac | bind `--host 0.0.0.0`; check `sudo ufw status` |
 | Spark wired IP changed | DHCP renewal → re-check `ip -br addr`, or pin it: `sudo nmcli con mod <con> ipv4.method manual ipv4.addresses 192.168.1.3/24` |
+
+## Deployed (2026-08-19)
+
+The service runs on the Spark as a systemd **user** unit and serves both API and UI:
+
+```bash
+ssh spark-lab-local systemctl --user status gocator      # state
+ssh spark-lab-local systemctl --user restart gocator     # after a code change
+ssh spark-lab-local journalctl --user -u gocator -f      # logs
+```
+
+**Dashboard: http://192.168.1.3:8000** — open it from the Mac or a phone on the same switch.
+
+Deploy a change from the Mac:
+```bash
+rsync -az --exclude .venv --exclude out --exclude '*.rec' --exclude .git \
+  --exclude node_modules --exclude data ~/Repos/Gocator-poc/ spark-lab-local:~/gocator-poc/
+ssh spark-lab-local 'export PATH=$HOME/.local/node/bin:$PATH; cd ~/gocator-poc/frontend && npm run build'
+ssh spark-lab-local systemctl --user restart gocator
+```
+
+Notes:
+- Node 22 is installed at `~/.local/node` (Ubuntu's Node 18 is too old for Vite 8; no sudo was needed).
+- SSH pins `IdentityFile ~/.ssh/id_ed25519` + `IdentitiesOnly yes` in `~/.ssh/config`; without it the agent offers every key and trips the server's `MaxAuthTries`.
+- If the service should survive logout, run `sudo loginctl enable-linger prabal` once.
+
+**Verified on the Spark:** backend selftest passes, and a full replay of the Tobetsu recording produced **42 frames → 55 heads**, identical to the Mac. Detection throughput is noticeably faster than the MacBook.
