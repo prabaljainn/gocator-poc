@@ -17,7 +17,8 @@ export function useWs(onEvent: (e: WsEvent) => void) {
   useEffect(() => {
     let ws: WebSocket | null = null
     let retry: ReturnType<typeof setTimeout>
-    let keepalive: ReturnType<typeof setInterval>
+    let watchdog: ReturnType<typeof setInterval>
+    let lastMsg = Date.now()
     let closed = false
 
     const connect = () => {
@@ -25,18 +26,30 @@ export function useWs(onEvent: (e: WsEvent) => void) {
       ws = new WebSocket(`${proto}://${location.host}/ws`)
       ws.onopen = () => {
         setConnected(true)
-        keepalive = setInterval(() => ws?.readyState === WebSocket.OPEN && ws.send('ping'), 20000)
+        lastMsg = Date.now()
+        // A severed socket can sit in OPEN forever and never fire onclose, so
+        // silence — not socket state — is what we treat as dead. The server
+        // heartbeats every 10s; 35s of nothing means reconnect.
+        watchdog = setInterval(() => {
+          if (Date.now() - lastMsg > 35000) { setConnected(false); ws?.close() }
+        }, 5000)
       }
-      ws.onmessage = (m) => { try { cb.current(JSON.parse(m.data)) } catch { /* ignore */ } }
+      ws.onmessage = (m) => {
+        lastMsg = Date.now()
+        let e
+        try { e = JSON.parse(m.data) } catch { return }
+        if (e.type === 'heartbeat') return
+        cb.current(e)
+      }
       ws.onclose = () => {
         setConnected(false)
-        clearInterval(keepalive)
+        clearInterval(watchdog)
         if (!closed) retry = setTimeout(connect, 2000)
       }
       ws.onerror = () => ws?.close()
     }
     connect()
-    return () => { closed = true; clearTimeout(retry); clearInterval(keepalive); ws?.close() }
+    return () => { closed = true; clearTimeout(retry); clearInterval(watchdog); ws?.close() }
   }, [])
 
   return connected

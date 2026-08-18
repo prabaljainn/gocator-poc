@@ -16,8 +16,17 @@ export function Live() {
   const [err, setErr] = useState<string | null>(null)
   const [gtHead, setGtHead] = useState<Head | null>(null)
   const seen = useRef(new Set<number>())
+  const shownSession = useRef<number | null>(null)
 
   const onEvent = useCallback((e: WsEvent) => {
+    // Frame indices restart at 0 every session, so dedup has to be scoped to one
+    // session — otherwise a second session's frames all look already-seen.
+    if (e.session_id !== shownSession.current) {
+      shownSession.current = e.session_id
+      seen.current.clear()
+      setFeed([])
+      setLatest(null)
+    }
     if (e.type === 'frame_processed') {
       if (seen.current.has(e.frame_idx)) return
       seen.current.add(e.frame_idx)
@@ -48,6 +57,8 @@ export function Live() {
         .map(([frameIdx, hs]) => ({
           frameIdx, heads: hs, overlay: api.overlayUrl(last.id, frameIdx), at: 0,
         }))
+      if (shownSession.current !== null) return  // a live session already took over
+      shownSession.current = last.id
       setFeed((f) => (f.length ? f : items.slice(0, 60)))
       setLatest((l) => l ?? items[0])
     }).catch(() => {})
@@ -56,6 +67,7 @@ export function Live() {
 
   const start = async () => {
     setBusy(true); setErr(null); seen.current.clear(); setFeed([]); setLatest(null)
+    shownSession.current = null
     try {
       await api.start({ mode: 'replay', source, limit: limit ? Number(limit) : null })
       refresh()

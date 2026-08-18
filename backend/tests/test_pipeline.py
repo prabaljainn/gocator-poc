@@ -84,6 +84,24 @@ def test_pipeline_detects_and_stores(tmp: Path):
     print(f"  ok  pipeline: 3 frames → {len(heads)} heads stored, JSON-clean")
 
 
+def test_ws_events_are_json_serialisable(tmp: Path):
+    """Head payloads carry numpy scalars; if they reach the socket unconverted
+    the send throws and every browser gets dropped mid-session."""
+    import json
+    store = Store(tmp / "db_ws.sqlite")
+    events: list[tuple[str, dict]] = []
+    runner = SessionRunner(store, _FakeSource(n=2), tmp, "s_ws", "test",
+                           on_event=lambda k, p: events.append((k, p)))
+    runner.start()
+    runner.join(timeout=60)
+    frames = [p for k, p in events if k == "frame_processed"]
+    assert frames, "no frame_processed events emitted"
+    assert any(f["heads"] for f in frames), "no event carried heads — test is vacuous"
+    for k, p in events:
+        json.dumps({"type": k, **p})  # raises TypeError on numpy scalars
+    print(f"  ok  {len(events)} WS events JSON-serialisable (heads included)")
+
+
 def test_raw_survives_detector_failure(tmp: Path):
     """The D5 invariant: a detector crash must not cost the raw frame."""
     store = Store(tmp / "db2.sqlite")
@@ -134,6 +152,7 @@ if __name__ == "__main__":
         tmp = Path(td)
         test_recorder_roundtrip(tmp)
         test_pipeline_detects_and_stores(tmp)
+        test_ws_events_are_json_serialisable(tmp)
         test_raw_survives_detector_failure(tmp)
         test_validation_math(tmp)
     rec = next((p for p in [Path("tobetsu-data-20260730-1416.rec"),

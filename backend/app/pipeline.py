@@ -70,7 +70,10 @@ class SessionRunner:
                     z_mm, inten, valid = detect.preprocess(frame.z16, frame.intensity)
                     heads = detect.find_heads(z_mm, inten, valid)
                     self.recorder.save_overlay(frame.idx, detect.overlay(inten, heads))
-                    rows = [{k: v for k, v in h.items() if not k.startswith("_")} for h in heads]
+                    # numpy scalars aren't JSON-serialisable; without this the first
+                    # frame carrying heads kills the WebSocket send (and the client).
+                    rows = [{k: (v.item() if hasattr(v, "item") else v)
+                             for k, v in h.items() if not k.startswith("_")} for h in heads]
                     self.store.add_heads(fid, rows)
                     self.store.set_frame_status(fid, "detected")
                     accepted = [r for r in rows if r["accepted"]]

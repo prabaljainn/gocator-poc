@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 import os
 import shutil
 from datetime import datetime
@@ -20,6 +22,7 @@ from .pipeline import SessionRunner
 from .sources import ReplaySource, SessionSource
 from .store import Store
 
+log = logging.getLogger("gocator")
 REPO = Path(__file__).resolve().parents[2]
 DATA_ROOT = Path(os.environ.get("GOCATOR_DATA", REPO / "data"))
 SENSOR_IP = os.environ.get("GOCATOR_SENSOR", "192.168.1.10")
@@ -34,11 +37,27 @@ current: SessionRunner | None = None
 
 class Hub:
     """Fan-out to connected browsers. Events are fire-and-forget; the UI
-    re-syncs over REST on reconnect."""
+    re-syncs over REST on reconnect.
+
+    All sends go through one queue drained by a single task: Starlette
+    WebSockets do not tolerate concurrent writes, and the detector thread
+    emits faster than a socket drains — writing directly from many
+    run_coroutine_threadsafe callbacks corrupts the connection after a few
+    frames and the UI silently stops updating.
+    """
+
+    QUEUE_MAX = 256
 
     def __init__(self):
         self.clients: set[WebSocket] = set()
         self.loop: asyncio.AbstractEventLoop | None = None
+        self.queue: asyncio.Queue | None = None
+        self.dropped = 0
+
+    async def start(self):
+        self.loop = asyncio.get_running_loop()
+        self.queue = asyncio.Queue(maxsize=self.QUEUE_MAX)
+        asyncio.create_task(self._drain())
 
     async def join(self, ws: WebSocket):
         await ws.accept()
@@ -49,15 +68,34 @@ class Hub:
 
     def emit(self, kind: str, payload: dict):
         """Callable from the pipeline's worker thread."""
-        if not self.loop:
+        if not self.loop or not self.queue:
             return
         msg = {"type": kind, **payload}
-        asyncio.run_coroutine_threadsafe(self._send(msg), self.loop)
+        self.loop.call_soon_threadsafe(self._offer, msg)
+
+    def _offer(self, msg: dict):
+        try:
+            self.queue.put_nowait(msg)
+        except asyncio.QueueFull:
+            self.dropped += 1  # a stalled browser must never stall detection
+
+    async def _drain(self):
+        while True:
+            msg = await self.queue.get()
+            await self._send(msg)
 
     async def _send(self, msg: dict):
+        # Serialise once, up front: an unserialisable payload is a bug in us, and
+        # must not be mistaken for dead clients and silently drop every browser.
+        try:
+            text = json.dumps(msg)
+        except TypeError:
+            log.exception("un-serialisable WS payload (type=%s) — event dropped",
+                          msg.get("type"))
+            return
         for ws in list(self.clients):
             try:
-                await ws.send_json(msg)
+                await ws.send_text(text)
             except Exception:
                 self.drop(ws)
 
@@ -65,9 +103,22 @@ class Hub:
 hub = Hub()
 
 
+HEARTBEAT_S = 10
+
+
 @app.on_event("startup")
 async def _startup():
-    hub.loop = asyncio.get_running_loop()
+    await hub.start()
+
+    async def beat():
+        """Clients detect a half-open socket by the absence of these — without a
+        server heartbeat a severed connection still reads as OPEN and the UI
+        silently freezes until someone reloads."""
+        while True:
+            await asyncio.sleep(HEARTBEAT_S)
+            await hub._send({"type": "heartbeat"})
+
+    asyncio.create_task(beat())
 
 
 class StartSession(BaseModel):
