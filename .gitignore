@@ -12,3 +12,5 @@ __pycache__/
 
 # Live service data (sessions, sqlite)
 data/
+node_modules/
+frontend/dist/

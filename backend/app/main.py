@@ -189,4 +189,15 @@ async def ws_endpoint(ws: WebSocket):
 
 _dist = REPO / "frontend" / "dist"
 if _dist.is_dir():
-    app.mount("/", StaticFiles(directory=_dist, html=True), name="frontend")
+    app.mount("/assets", StaticFiles(directory=_dist / "assets"), name="assets")
+
+    @app.get("/{path:path}")
+    def spa(path: str):
+        """Serve the built file if it exists, else index.html so client-side
+        routes like /sessions/2 survive a page load or a shared link."""
+        if path.startswith("api/"):
+            raise HTTPException(404, "no such endpoint")
+        f = _dist / path
+        if path and f.is_file():
+            return FileResponse(f)
+        return FileResponse(_dist / "index.html")
