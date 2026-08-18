@@ -1,0 +1,11 @@
+# Gocator replay/recording files are large — keep out of git
+*.rec
+*.gorec
+
+# Exported scan data
+*.ply
+*.csv
+
+.venv/
+__pycache__/
+.DS_Store
