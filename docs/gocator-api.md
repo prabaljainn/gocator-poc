@@ -102,3 +102,15 @@ grep -oE '[A-Za-z_$][A-Za-z0-9_$]*=4[0-9]{3}\b' main.js | sort -u -t= -k2 -n
 grep -oE 'SUBPROTOCOL="[^"]+"' main.js
 ```
 The bundle hash changes with firmware — re-read `index.html` for the current filename.
+
+## Sensor output configuration (web UI: Output → Ethernet)
+
+Observed on the bench sensor 2026-08-19:
+
+- **Protocol: `Gocator`** ✅ — the TCP control+data protocol GoSDK speaks. Correct setting; leave it.
+- **Auto Disconnect: on, 10 s** — the sensor drops a client that stops reading for 10 s. Our acquisition loop must keep draining the socket; a slow detector must never back-pressure the receive path (it doesn't: detection runs on a separate worker off a queue).
+- **Data → Profiles → `Top` (checked)**, Events → Exposure End (unchecked).
+
+⚠️ **`Profiles` means the sensor is in Profile mode, not Surface mode.** A profile is a single laser cross-section; our detector needs **Surfaces** (the stacked 2D heightmap + intensity, `GvSurfaceMsg`), which is what the Tobetsu `.rec` contains.
+
+To stream what the pipeline expects: web UI → **Scan → Mode → Surface** (with the fixed-length 600 mm setting used in the field), then re-check **Output → Ethernet → Data**, which will then offer **Surfaces** and **Surface Intensity** — both must be checked. Intensity is not optional here: the detector keys entirely on the intensity texture map.
