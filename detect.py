@@ -17,7 +17,7 @@ import rec_reader as rr
 
 DS = 4                              # downsample stride on X (raw px are ~0.124mm)
 PX_MM = rr.DX_MM * DS               # isotropic mm/px after Y-rescale (~0.50mm)
-MIN_DIA_MM, MAX_DIA_MM = 30.0, 350.0   # disc-only diameters run smaller than full heads
+MIN_DIA_MM, MAX_DIA_MM = 32.0, 350.0   # disc-only diameters run smaller than full heads
 
 
 def preprocess(z16, inten, dx_mm=rr.DX_MM, dy_mm=rr.DY_MM, z_res_mm=rr.ZRES_MM):

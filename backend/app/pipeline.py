@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import detect  # noqa: E402
 import rec_reader as rr  # noqa: E402
 
+from . import ml_detector  # noqa: E402
 from .recorder import Recorder  # noqa: E402
 from .sources import FrameSource  # noqa: E402
 from .store import Store  # noqa: E402
@@ -73,7 +74,7 @@ class SessionRunner:
                         frame.z16, frame.intensity,
                         **{k: v for k, v in (("dx_mm", frame.dx_mm),
                                              ("dy_mm", frame.dy_mm)) if v})
-                    heads = detect.find_heads(z_mm, inten, valid, px_mm)
+                    heads = ml_detector.find_heads(z_mm, inten, valid, px_mm)
                     self.recorder.save_overlay(frame.idx, detect.overlay(inten, heads))
                     # numpy scalars aren't JSON-serialisable; without this the first
                     # frame carrying heads kills the WebSocket send (and the client).
