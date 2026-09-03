@@ -2,6 +2,7 @@ import { BrowserRouter, NavLink, Route, Routes } from 'react-router-dom'
 import { Live } from './pages/Live'
 import { Sessions } from './pages/Sessions'
 import { SessionDetail } from './pages/SessionDetail'
+import { Annotate } from './pages/Annotate'
 
 const tab = ({ isActive }: { isActive: boolean }) =>
   `rounded px-3 py-1.5 text-sm ${isActive ? 'bg-seed-500 font-semibold text-soil-900' : 'text-soil-300 hover:bg-soil-800/60'}`
@@ -17,6 +18,7 @@ export default function App() {
           <nav className="flex gap-1">
             <NavLink to="/" end className={tab}>Live</NavLink>
             <NavLink to="/sessions" className={tab}>Sessions</NavLink>
+            <NavLink to="/annotate" className={tab}>Dataset Lab</NavLink>
           </nav>
         </header>
         <main className="flex-1">
@@ -24,6 +26,7 @@ export default function App() {
             <Route path="/" element={<Live />} />
             <Route path="/sessions" element={<Sessions />} />
             <Route path="/sessions/:id" element={<SessionDetail />} />
+            <Route path="/annotate" element={<Annotate />} />
           </Routes>
         </main>
       </div>

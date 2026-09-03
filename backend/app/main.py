@@ -21,6 +21,7 @@ from pydantic import BaseModel
 from .pipeline import SessionRunner
 from .sources import LiveSource, ReplaySource, SessionSource
 from .store import Store
+from .annotate import router as annotate_router
 
 log = logging.getLogger("gocator")
 REPO = Path(__file__).resolve().parents[2]
@@ -30,6 +31,7 @@ SENSOR_IP = os.environ.get("GOCATOR_SENSOR", "192.168.1.10")
 app = FastAPI(title="gocator-poc")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"],
                    allow_headers=["*"])  # ponytail: LAN-only tool; add auth if it leaves the bench
+app.include_router(annotate_router)
 
 store = Store(DATA_ROOT / "gocator.sqlite")
 current: SessionRunner | None = None
