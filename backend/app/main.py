@@ -128,6 +128,7 @@ class StartSession(BaseModel):
     source: str                   # .rec path, or session dir name
     notes: str = ""
     limit: int | None = None      # cap frames, handy for a quick pass
+    fps: float = 2.0              # default 2 FPS for observable playback, 0 = uncapped
 
 
 @app.post("/api/sessions")
@@ -152,7 +153,7 @@ def start_session(req: StartSession):
     else:
         raise HTTPException(400, f"unsupported mode {req.mode!r}")
     name = f"{datetime.now().strftime('%Y-%m-%d_%H%M%S')}_{req.mode}"
-    current = SessionRunner(store, src, DATA_ROOT, name, req.mode, req.notes, hub.emit)
+    current = SessionRunner(store, src, DATA_ROOT, name, req.mode, req.notes, hub.emit, fps=req.fps)
     current.start()
     hub.emit("session_state", {"session_id": current.session_id, "state": "running"})
     return {"session_id": current.session_id, "dir": name}
@@ -163,6 +164,42 @@ def stop_session(sid: int):
     if current and current.session_id == sid and current.alive:
         current.stop()
         return {"stopping": True}
+    raise HTTPException(404, "not the running session")
+
+
+@app.post("/api/sessions/{sid}/pause")
+def pause_session(sid: int):
+    if current and current.session_id == sid and current.alive:
+        current.pause()
+        return {"paused": True}
+    raise HTTPException(404, "not the running session")
+
+
+@app.post("/api/sessions/{sid}/resume")
+def resume_session(sid: int):
+    if current and current.session_id == sid and current.alive:
+        current.resume()
+        return {"resumed": True}
+    raise HTTPException(404, "not the running session")
+
+
+@app.post("/api/sessions/{sid}/step")
+def step_session(sid: int):
+    if current and current.session_id == sid and current.alive:
+        current.step()
+        return {"stepped": True}
+    raise HTTPException(404, "not the running session")
+
+
+class SetSpeedRequest(BaseModel):
+    fps: float
+
+
+@app.post("/api/sessions/{sid}/speed")
+def set_speed(sid: int, req: SetSpeedRequest):
+    if current and current.session_id == sid and current.alive:
+        current.set_fps(req.fps)
+        return {"fps": current.fps}
     raise HTTPException(404, "not the running session")
 
 
@@ -219,6 +256,8 @@ def health():
     running = bool(current and current.alive)
     return {
         "running": running,
+        "paused": bool(current and current.is_paused),
+        "fps": current.fps if current else 2.0,
         "session_id": current.session_id if current else None,
         "frames_done": current.frames_done if current else 0,
         "heads_found": current.heads_found if current else 0,

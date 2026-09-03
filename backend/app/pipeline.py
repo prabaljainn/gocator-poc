@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import sys
 import threading
+import time
 import traceback
 from pathlib import Path
 
@@ -24,7 +25,7 @@ class SessionRunner:
     """Runs one session on a worker thread. Stop with .stop()."""
 
     def __init__(self, store: Store, source: FrameSource, data_root: Path,
-                 name: str, mode: str, notes: str = "", on_event=None):
+                 name: str, mode: str, notes: str = "", on_event=None, fps: float = 2.0):
         self.store, self.source = store, source
         self.on_event = on_event or (lambda *_: None)
         self.recorder = Recorder(data_root / "sessions", name, meta={
@@ -37,6 +38,9 @@ class SessionRunner:
         self.session_id = store.start_session(mode, source.health().detail,
                                               str(self.recorder.dir), notes)
         self._stop = threading.Event()
+        self._pause = threading.Event()
+        self._step = threading.Event()
+        self.fps = fps
         self.frames_done = 0
         self.heads_found = 0
         self.error: str | None = None
@@ -47,6 +51,24 @@ class SessionRunner:
 
     def stop(self) -> None:
         self._stop.set()
+
+    def pause(self) -> None:
+        self._pause.set()
+        self.on_event("session_state", {"session_id": self.session_id, "state": "paused"})
+
+    def resume(self) -> None:
+        self._pause.clear()
+        self.on_event("session_state", {"session_id": self.session_id, "state": "running"})
+
+    def step(self) -> None:
+        self._step.set()
+
+    def set_fps(self, fps: float) -> None:
+        self.fps = max(0.0, fps)
+
+    @property
+    def is_paused(self) -> bool:
+        return self._pause.is_set()
 
     def join(self, timeout: float | None = None) -> None:
         self._thread.join(timeout)
@@ -62,6 +84,19 @@ class SessionRunner:
                 if self._stop.is_set():
                     state = "stopped"
                     break
+
+                # Handle pause and stepping
+                while self._pause.is_set() and not self._stop.is_set():
+                    if self._step.is_set():
+                        self._step.clear()
+                        break
+                    time.sleep(0.04)
+
+                if self._stop.is_set():
+                    state = "stopped"
+                    break
+
+                t_start = time.time()
                 # 1. raw to disk FIRST — nothing below may risk this data
                 self.recorder.save_raw(frame.idx, frame.z16, frame.intensity)
                 fid = self.store.add_frame(self.session_id, frame.idx, "recorded")
@@ -93,9 +128,18 @@ class SessionRunner:
                 except Exception:
                     err = traceback.format_exc(limit=3)
                     self.store.set_frame_status(fid, "failed", err)
-                    self.on_event("frame_failed", {"session_id": self.session_id,
-                                                   "frame_idx": frame.idx, "error": err})
                 self.frames_done += 1
+
+                # Dynamic FPS pacing (0 = max speed/uncapped)
+                if self.fps > 0:
+                    elapsed = time.time() - t_start
+                    delay = (1.0 / self.fps) - elapsed
+                    if delay > 0:
+                        t_end = time.time() + delay
+                        while time.time() < t_end and not self._stop.is_set():
+                            if self._pause.is_set():
+                                break
+                            time.sleep(min(0.03, max(0.001, t_end - time.time())))
         except Exception:
             self.error = traceback.format_exc(limit=5)
             state = "error"

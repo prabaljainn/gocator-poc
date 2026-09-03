@@ -13,6 +13,7 @@ export type Session = {
 
 export type Health = {
   running: boolean; session_id: number | null;
+  paused?: boolean; fps?: number;
   frames_done: number; heads_found: number;
   source: { kind: string; connected: boolean; frames_seen: number; detail: string } | null;
   disk_free_gb: number; sensor_ip: string; live_acquisition: boolean;
@@ -38,11 +39,16 @@ export const api = {
   session: (id: number) => req<Session & { heads: Head[] }>(`/api/sessions/${id}`),
   heads: (id: number) => req<Head[]>(`/api/sessions/${id}/heads`),
   validation: (id: number) => req<Validation>(`/api/sessions/${id}/validation`),
-  start: (body: { mode: string; source: string; notes?: string; limit?: number | null }) =>
+  start: (body: { mode: string; source: string; notes?: string; limit?: number | null; fps?: number }) =>
     req<{ session_id: number; dir: string }>('/api/sessions', {
       method: 'POST', body: JSON.stringify(body),
     }),
   stop: (id: number) => req<{ stopping: boolean }>(`/api/sessions/${id}/stop`, { method: 'POST' }),
+  pause: (id: number) => req<{ paused: boolean }>(`/api/sessions/${id}/pause`, { method: 'POST' }),
+  resume: (id: number) => req<{ resumed: boolean }>(`/api/sessions/${id}/resume`, { method: 'POST' }),
+  step: (id: number) => req<{ stepped: boolean }>(`/api/sessions/${id}/step`, { method: 'POST' }),
+  setSpeed: (id: number, fps: number) =>
+    req<{ fps: number }>(`/api/sessions/${id}/speed`, { method: 'POST', body: JSON.stringify({ fps }) }),
   addGroundTruth: (b: { session_id: number; plant_tag: string; caliper_mm: number; head_id: number | null }) =>
     req<{ id: number }>('/api/ground-truth', { method: 'POST', body: JSON.stringify(b) }),
   overlayUrl: (sid: number, frameIdx: number) => `/api/sessions/${sid}/overlay/${frameIdx}.jpg`,

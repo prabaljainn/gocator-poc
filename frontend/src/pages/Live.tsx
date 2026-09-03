@@ -66,13 +66,15 @@ export function Live() {
     return () => { cancelled = true }
   }, [])
 
+  const [fps, setFps] = useState<number>(2.0)
+
   const start = async () => {
     setBusy(true); setErr(null); seen.current.clear(); setFeed([]); setLatest(null)
     shownSession.current = null
     try {
       await api.start(mode === 'live'
-        ? { mode: 'live', source: health?.sensor_ip ?? '192.168.1.10' }
-        : { mode: 'replay', source, limit: limit ? Number(limit) : null })
+        ? { mode: 'live', source: health?.sensor_ip ?? '192.168.1.10', fps }
+        : { mode: 'replay', source, limit: limit ? Number(limit) : null, fps })
       refresh()
     } catch (e) { setErr(String(e)) } finally { setBusy(false) }
   }
@@ -80,7 +82,52 @@ export function Live() {
     if (health?.session_id) { await api.stop(health.session_id).catch(() => {}); refresh() }
   }
 
+  const togglePause = async () => {
+    if (!health?.session_id) return
+    try {
+      if (health.paused) {
+        await api.resume(health.session_id)
+      } else {
+        await api.pause(health.session_id)
+      }
+      refresh()
+    } catch (e) { setErr(String(e)) }
+  }
+
+  const stepNext = async () => {
+    if (!health?.session_id) return
+    try {
+      await api.step(health.session_id)
+    } catch (e) { setErr(String(e)) }
+  }
+
+  const changeSpeed = async (newFps: number) => {
+    setFps(newFps)
+    if (health?.session_id && health.running) {
+      try {
+        await api.setSpeed(health.session_id, newFps)
+      } catch (e) { setErr(String(e)) }
+    }
+  }
+
+  // Keyboard shortcut to Pause/Resume with Space or Step with S/ArrowRight
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if (['INPUT', 'SELECT'].includes((e.target as HTMLElement).tagName)) return
+      if (e.key === ' ' && health?.running) {
+        e.preventDefault()
+        togglePause()
+      } else if ((e.key === 'ArrowRight' || e.key === 's' || e.key === 'S') && health?.running && health?.paused) {
+        e.preventDefault()
+        stepNext()
+      }
+    }
+    window.addEventListener('keydown', handleKey)
+    return () => window.removeEventListener('keydown', handleKey)
+  }, [health?.running, health?.paused, health?.session_id])
+
   const running = health?.running ?? false
+  const isPaused = health?.paused ?? false
   const dias = feed.flatMap((f) => f.heads.map((h) => h.dia_mm))
   const meanDia = dias.length ? dias.reduce((a, b) => a + b, 0) / dias.length : null
 
@@ -127,22 +174,76 @@ export function Live() {
             </label>
           </>
         )}
-        {running ? (
-          <button onClick={stop}
-            className="rounded bg-alert-500 px-5 py-2 text-sm font-semibold text-white hover:opacity-90">
-            Stop session
-          </button>
-        ) : (
-          <button onClick={start} disabled={busy}
-            className="rounded bg-seed-500 px-5 py-2 text-sm font-semibold text-soil-900
-                       hover:bg-seed-400 disabled:opacity-50">
-            {busy ? 'Starting…' : 'Start session'}
-          </button>
-        )}
-        <span className={`ml-auto flex items-center gap-2 text-xs ${connected ? 'text-leaf-500' : 'text-alert-500'}`}>
-          <span className={`inline-block h-2 w-2 rounded-full ${connected ? 'bg-leaf-500' : 'bg-alert-500'}`} />
-          {connected ? 'live' : 'reconnecting…'}
-        </span>
+
+        {/* Speed tuning selector */}
+        <div className="flex flex-col gap-1 text-xs text-soil-300">
+          Speed
+          <select
+            value={fps}
+            onChange={(e) => changeSpeed(Number(e.target.value))}
+            className="rounded border border-soil-800 bg-soil-900 px-2 py-1.5 font-mono text-sm text-soil-50 focus:outline-none"
+          >
+            <option value={0.5}>0.5 FPS (2s / frame)</option>
+            <option value={1.0}>1.0 FPS (Slow)</option>
+            <option value={2.0}>2.0 FPS (Observable)</option>
+            <option value={5.0}>5.0 FPS (Fast)</option>
+            <option value={0}>Max Speed (Uncapped)</option>
+          </select>
+        </div>
+
+        {/* Playback Controls */}
+        <div className="flex items-center gap-2">
+          {running ? (
+            <>
+              <button
+                onClick={togglePause}
+                className={`rounded px-4 py-2 text-sm font-semibold text-soil-900 shadow transition-colors ${
+                  isPaused ? 'bg-yellow-400 hover:bg-yellow-300' : 'bg-soil-200 hover:bg-white'
+                }`}
+                title="Shortcut: Space"
+              >
+                {isPaused ? '▶ Resume' : '⏸ Pause'}
+              </button>
+
+              {isPaused && (
+                <button
+                  onClick={stepNext}
+                  className="rounded border border-soil-700 bg-soil-800 px-3 py-2 text-sm font-semibold text-soil-100 hover:bg-soil-700"
+                  title="Step 1 frame forward (Shortcut: ArrowRight or S)"
+                >
+                  ⏭ Step
+                </button>
+              )}
+
+              <button
+                onClick={stop}
+                className="rounded bg-alert-500 px-4 py-2 text-sm font-semibold text-white hover:opacity-90"
+              >
+                Stop
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={start}
+              disabled={busy}
+              className="rounded bg-seed-500 px-5 py-2 text-sm font-semibold text-soil-900 hover:bg-seed-400 disabled:opacity-50"
+            >
+              {busy ? 'Starting…' : 'Start session'}
+            </button>
+          )}
+        </div>
+
+        <div className="ml-auto flex items-center gap-3">
+          {running && isPaused && (
+            <span className="rounded bg-yellow-400/20 border border-yellow-400/50 px-2 py-0.5 text-xs font-bold text-yellow-400 animate-pulse">
+              PAUSED
+            </span>
+          )}
+          <span className={`flex items-center gap-2 text-xs ${connected ? 'text-leaf-500' : 'text-alert-500'}`}>
+            <span className={`inline-block h-2 w-2 rounded-full ${connected ? 'bg-leaf-500' : 'bg-alert-500'}`} />
+            {connected ? 'live' : 'reconnecting…'}
+          </span>
+        </div>
       </div>
 
       {err && <div className="rounded border border-alert-500/50 bg-alert-500/10 px-4 py-2 text-sm text-alert-500">{err}</div>}
