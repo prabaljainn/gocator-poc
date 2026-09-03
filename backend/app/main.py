@@ -223,8 +223,19 @@ def health():
         "source": current.source.health().__dict__ if current else None,
         "disk_free_gb": round(du.free / 1e9, 1),
         "sensor_ip": SENSOR_IP,
-        "live_acquisition": False,  # flips when the GoSDK LiveSource lands
+        "live_acquisition": _gosdk_available(),
     }
+
+
+def _gosdk_available() -> bool:
+    """True when the GoSDK libs are present and loadable, so the UI can offer
+    live mode instead of failing at session start."""
+    try:
+        from .gosdk import _Lib
+        _Lib()
+        return True
+    except Exception:
+        return False
 
 
 @app.websocket("/ws")

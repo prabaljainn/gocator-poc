@@ -10,6 +10,7 @@ export function Live() {
   const [health, setHealth] = useState<Health | null>(null)
   const [feed, setFeed] = useState<FeedItem[]>([])
   const [latest, setLatest] = useState<FeedItem | null>(null)
+  const [mode, setMode] = useState<'live' | 'replay'>('live')
   const [source, setSource] = useState('tobetsu-data-20260730-1416.rec')
   const [limit, setLimit] = useState('')
   const [busy, setBusy] = useState(false)
@@ -69,7 +70,9 @@ export function Live() {
     setBusy(true); setErr(null); seen.current.clear(); setFeed([]); setLatest(null)
     shownSession.current = null
     try {
-      await api.start({ mode: 'replay', source, limit: limit ? Number(limit) : null })
+      await api.start(mode === 'live'
+        ? { mode: 'live', source: health?.sensor_ip ?? '192.168.1.10' }
+        : { mode: 'replay', source, limit: limit ? Number(limit) : null })
       refresh()
     } catch (e) { setErr(String(e)) } finally { setBusy(false) }
   }
@@ -84,19 +87,46 @@ export function Live() {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-end gap-3 rounded-lg border border-soil-800 bg-soil-900/60 p-4">
-        <label className="flex flex-col gap-1 text-xs text-soil-300">
-          Source (.rec on the server)
-          <input value={source} onChange={(e) => setSource(e.target.value)} disabled={running}
-            className="w-80 rounded border border-soil-800 bg-soil-900 px-2 py-1.5 font-mono text-sm
-                       text-soil-50 disabled:opacity-50" />
-        </label>
-        <label className="flex flex-col gap-1 text-xs text-soil-300">
-          Frame limit
-          <input value={limit} onChange={(e) => setLimit(e.target.value.replace(/\D/g, ''))}
-            placeholder="all" disabled={running}
-            className="w-24 rounded border border-soil-800 bg-soil-900 px-2 py-1.5 font-mono text-sm
-                       text-soil-50 disabled:opacity-50" />
-        </label>
+        <div className="flex flex-col gap-1 text-xs text-soil-300">
+          Mode
+          <div className="flex overflow-hidden rounded border border-soil-800">
+            {(['live', 'replay'] as const).map((m) => (
+              <button key={m} onClick={() => setMode(m)} disabled={running}
+                className={`px-3 py-1.5 text-sm ${mode === m
+                  ? 'bg-seed-500 font-semibold text-soil-900'
+                  : 'text-soil-300 hover:bg-soil-800/60'} disabled:opacity-50`}>
+                {m === 'live' ? 'Sensor' : 'Replay'}
+              </button>
+            ))}
+          </div>
+        </div>
+        {mode === 'live' ? (
+          <div className="flex flex-col gap-1 text-xs text-soil-300">
+            Sensor
+            <div className="rounded border border-soil-800 px-3 py-1.5 font-mono text-sm text-soil-50">
+              {health?.sensor_ip ?? '—'}
+              {health && !health.live_acquisition && (
+                <span className="ml-2 text-alert-500">GoSDK unavailable</span>
+              )}
+            </div>
+          </div>
+        ) : (
+          <>
+            <label className="flex flex-col gap-1 text-xs text-soil-300">
+              Source (.rec on the server)
+              <input value={source} onChange={(e) => setSource(e.target.value)} disabled={running}
+                className="w-80 rounded border border-soil-800 bg-soil-900 px-2 py-1.5 font-mono text-sm
+                           text-soil-50 disabled:opacity-50" />
+            </label>
+            <label className="flex flex-col gap-1 text-xs text-soil-300">
+              Frame limit
+              <input value={limit} onChange={(e) => setLimit(e.target.value.replace(/\D/g, ''))}
+                placeholder="all" disabled={running}
+                className="w-24 rounded border border-soil-800 bg-soil-900 px-2 py-1.5 font-mono text-sm
+                           text-soil-50 disabled:opacity-50" />
+            </label>
+          </>
+        )}
         {running ? (
           <button onClick={stop}
             className="rounded bg-alert-500 px-5 py-2 text-sm font-semibold text-white hover:opacity-90">
