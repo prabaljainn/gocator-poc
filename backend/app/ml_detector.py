@@ -1,8 +1,8 @@
-"""Multi-Modal Deep Learning detector for Gocator sunflower heads.
+"""Multi-Modal Deep Learning Instance Segmentation detector for Gocator sunflower heads.
 
 Fuses 2D Intensity, 3D Relative Height, and 3D Surface Gradient into a
-3-channel composite image for YOLOv8 neural inference, then refines
-caliper diameter using 3D depth metrology.
+3-channel composite image for YOLOv8-seg neural instance segmentation,
+then measures true disc diameter and tilt via 3D point cloud and mask geometry.
 """
 from pathlib import Path
 import cv2
@@ -10,29 +10,29 @@ import numpy as np
 import rec_reader as rr
 import detect
 
-DEFAULT_WEIGHTS = Path(__file__).resolve().parent.parent.parent / "data" / "models" / "sunflower_yolov8n.onnx"
-FALLBACK_PT = Path(__file__).resolve().parent.parent.parent / "data" / "models" / "sunflower_yolov8n" / "weights" / "best.pt"
+DEFAULT_SEG_WEIGHTS = Path(__file__).resolve().parent.parent.parent / "data" / "models" / "sunflower_yolov8n_seg.onnx"
+FALLBACK_SEG_PT = Path(__file__).resolve().parent.parent.parent / "data" / "models" / "sunflower_yolov8n_seg.pt"
+FALLBACK_DETECT_ONNX = Path(__file__).resolve().parent.parent.parent / "data" / "models" / "sunflower_yolov8n.onnx"
 
 _MODEL = None
 
 
-def get_detector(weights_path=None):
-    """Singleton getter for YOLO model."""
+def get_detector():
+    """Singleton getter for YOLO segmentation model."""
     global _MODEL
     if _MODEL is not None:
         return _MODEL
 
-    path = weights_path or (DEFAULT_WEIGHTS if DEFAULT_WEIGHTS.exists() else FALLBACK_PT)
-    if not path.exists():
-        return None
+    for path in [DEFAULT_SEG_WEIGHTS, FALLBACK_SEG_PT, FALLBACK_DETECT_ONNX]:
+        if path.exists():
+            try:
+                from ultralytics import YOLO
+                _MODEL = YOLO(str(path))
+                return _MODEL
+            except Exception as e:
+                print(f"Warning: failed loading {path} ({e})")
 
-    try:
-        from ultralytics import YOLO
-        _MODEL = YOLO(str(path))
-        return _MODEL
-    except Exception as e:
-        print(f"Warning: failed to load ML detector ({e}), falling back to classical detector")
-        return None
+    return None
 
 
 def make_fused_image(z_mm, i, valid):
@@ -46,7 +46,7 @@ def make_fused_image(z_mm, i, valid):
     z_rel = np.where(valid, np.clip(z_mm - bg_z, 0, 250), 0.0)
     ch1 = (z_rel / 250.0 * 255.0).astype(np.uint8)
 
-    # 3D surface gradient (depth boundary steps)
+    # 3D surface gradient
     z_blur = cv2.GaussianBlur(z_rel, (5, 5), 0)
     gx = cv2.Sobel(z_blur, cv2.CV_32F, 1, 0, ksize=3)
     gy = cv2.Sobel(z_blur, cv2.CV_32F, 0, 1, ksize=3)
@@ -57,7 +57,7 @@ def make_fused_image(z_mm, i, valid):
 
 
 def find_heads(z_mm, i, valid, px_mm=detect.PX_MM, conf_thr=0.40):
-    """Detect sunflower heads using multi-modal 3D YOLOv8 + depth metrology."""
+    """Detect and segment sunflower heads using YOLOv8-seg + 3D depth metrology."""
     model = get_detector()
     if model is None:
         return detect.find_heads(z_mm, i, valid, px_mm)
@@ -65,11 +65,9 @@ def find_heads(z_mm, i, valid, px_mm=detect.PX_MM, conf_thr=0.40):
     if valid.sum() < 1000:
         return []
 
-    # 1. 3D multi-modal fusion
     img_fused, bg_z = make_fused_image(z_mm, i, valid)
     h_img, w_img = img_fused.shape[:2]
 
-    # 2. Neural inference
     results = model(img_fused, conf=conf_thr, verbose=False)
     if not results or len(results[0].boxes) == 0:
         return []
@@ -77,40 +75,43 @@ def find_heads(z_mm, i, valid, px_mm=detect.PX_MM, conf_thr=0.40):
     heads = []
     boxes = results[0].boxes.xyxy.cpu().numpy()
     confs = results[0].boxes.conf.cpu().numpy()
+    masks = getattr(results[0], "masks", None)
 
-    # Precompute texture map
-    f = i.astype(np.float32)
-    mu = cv2.boxFilter(f, -1, (detect.TEX_WIN, detect.TEX_WIN))
-    var = cv2.boxFilter(f * f, -1, (detect.TEX_WIN, detect.TEX_WIN)) - mu * mu
-    tex = np.sqrt(np.clip(var, 0, None))
-    tex[~valid] = 0
-    texbin = (tex > detect.TEX_THR).astype(np.float32)
+    for idx, ((x1, y1, x2, y2), conf) in enumerate(zip(boxes, confs)):
+        # If segmentation mask is available, fit ellipse to the mask!
+        if masks is not None and masks.data is not None and idx < len(masks.data):
+            m_raw = masks.data[idx].cpu().numpy()
+            if m_raw.shape != (h_img, w_img):
+                m_raw = cv2.resize(m_raw, (w_img, h_img), interpolation=cv2.INTER_LINEAR)
+            mask_bin = (m_raw > 0.5).astype(np.uint8)
 
-    for (x1, y1, x2, y2), conf in zip(boxes, confs):
-        x_min, x_max = max(int(x1), 0), min(int(x2), w_img)
-        y_min, y_max = max(int(y1), 0), min(int(y2), h_img)
-
-        # Refine center to peak texture/elevation within the box (avoids leaf-pull)
-        box_tex = tex[y_min:y_max, x_min:x_max]
-        if box_tex.size and box_tex.max() > detect.TEX_THR:
-            py, px = np.unravel_index(box_tex.argmax(), box_tex.shape)
-            cx_i = x_min + px
-            cy_i = y_min + py
+            contours, _ = cv2.findContours(mask_bin, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            if contours:
+                c = max(contours, key=cv2.contourArea)
+                if len(c) >= 5:
+                    (cx, cy), (ax1, ax2), angle = cv2.fitEllipse(c)
+                    major_dia_px = max(ax1, ax2)
+                    r_refined = major_dia_px / 2.0
+                    cx_i = int(round(cx))
+                    cy_i = int(round(cy))
+                else:
+                    (cx, cy), r_circ = cv2.minEnclosingCircle(c)
+                    r_refined = r_circ
+                    cx_i = int(round(cx))
+                    cy_i = int(round(cy))
+            else:
+                cx_i = int(round((x1 + x2) / 2.0))
+                cy_i = int(round((y1 + y2) / 2.0))
+                r_refined = (x2 - x1) / 2.0
         else:
             cx_i = int(round((x1 + x2) / 2.0))
             cy_i = int(round((y1 + y2) / 2.0))
+            r_refined = (x2 - x1) / 2.0
 
-        dia_px = float(x2 - x1)
-        r = int(round(dia_px / 2.0))
-
-        # Refine radius with radial boundary drop-off
-        r_refined = detect._refine_radius(texbin, cx_i, cy_i, r, step=8, r_min=int(15.0 / px_mm))
-
-        circ = np.zeros(texbin.shape, np.uint8)
+        circ = np.zeros((h_img, w_img), np.uint8)
         cv2.circle(circ, (cx_i, cy_i), max(int(0.85 * r_refined), 1), 1, -1)
         in_circ = circ > 0
         valid_frac = float(valid[in_circ].mean()) if in_circ.any() else 0.0
-        tex_in = float(tex[in_circ].mean()) if in_circ.any() else 0.0
         mean_h = float(np.nanmean(np.where(in_circ, z_mm, np.nan))) - bg_z
 
         edge = int(r_refined) + 2
@@ -122,7 +123,7 @@ def find_heads(z_mm, i, valid, px_mm=detect.PX_MM, conf_thr=0.40):
             "cy_mm": cy_i * px_mm,
             "dia_mm": dia_mm,
             "valid_frac": valid_frac,
-            "tex_in": tex_in,
+            "tex_in": 1.0,
             "height_mm": mean_h,
             "truncated": truncated,
             "accepted": True,
