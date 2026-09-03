@@ -66,10 +66,12 @@ class ReplaySource:
         ends = self._load_index()
         if self.limit is not None:
             ends = ends[: self.limit]
+        _, _, dx_mm, dy_mm, _ = rr.get_rec_info(self.path)
         for i, end in enumerate(ends):
             z16, inten = rr.read_frame(self.path, end)
             self._seen = i + 1
-            yield Frame(idx=i, z16=z16, intensity=inten, t_wall=time.time())
+            yield Frame(idx=i, z16=z16, intensity=inten, t_wall=time.time(),
+                        dx_mm=dx_mm, dy_mm=dy_mm)
 
     def health(self) -> SourceHealth:
         return SourceHealth(

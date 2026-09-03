@@ -17,7 +17,7 @@ import rec_reader as rr
 
 DS = 4                              # downsample stride on X (raw px are ~0.124mm)
 PX_MM = rr.DX_MM * DS               # isotropic mm/px after Y-rescale (~0.50mm)
-MIN_DIA_MM, MAX_DIA_MM = 50.0, 350.0   # disc-only diameters run smaller than full heads
+MIN_DIA_MM, MAX_DIA_MM = 30.0, 350.0   # disc-only diameters run smaller than full heads
 
 
 def preprocess(z16, inten, dx_mm=rr.DX_MM, dy_mm=rr.DY_MM, z_res_mm=rr.ZRES_MM):
@@ -46,26 +46,31 @@ MIN_MEAN_TEX = 40.0  # inside-disc texture; real heads measured 48-55, leaf clus
 MAX_HEADS = 6      # per frame; suppression radius 2.5r between picks
 
 
-def _refine_radius(texbin, cx, cy, r_coarse, step=8):
-    """The coarse scan quantizes r to 8px (~4mm); sweep 1px around the winner."""
+def _refine_radius(texbin, cx, cy, r_coarse, step=16, r_min=15):
+    """Refine radius around r_coarse by finding where boundary ring texture drops."""
     h, w = texbin.shape
-    best = float(r_coarse)
-    for r in range(max(r_coarse - step + 1, 2), r_coarse + step):
-        y0, y1 = max(cy - r, 0), min(cy + r + 1, h)
-        x0, x1 = max(cx - r, 0), min(cx + r + 1, w)
+    r_start = max(r_min, r_coarse - step)
+    r_end = min(int(r_coarse + step), max(h, w))
+    for r in range(r_end, r_start - 1, -1):
+        y0, y1 = max(cy - r - 1, 0), min(cy + r + 2, h)
+        x0, x1 = max(cx - r - 1, 0), min(cx + r + 2, w)
         yy, xx = np.ogrid[y0:y1, x0:x1]
-        m = (xx - cx) ** 2 + (yy - cy) ** 2 <= r * r
-        if texbin[y0:y1, x0:x1][m].mean() >= FILL_THR:
-            best = float(r)
-    return best
+        dist_sq = (xx - cx) ** 2 + (yy - cy) ** 2
+        ring_m = (dist_sq >= (r - 1.5) ** 2) & (dist_sq <= (r + 1.5) ** 2)
+        if not ring_m.any():
+            continue
+        rf = texbin[y0:y1, x0:x1][ring_m].mean()
+        if rf >= 0.50:
+            return float(r)
+    return float(r_coarse)
 
 
 def find_heads(z_mm, i, valid, px_mm=PX_MM):
     """Matched filter: the largest circle >=FILL_THR full of seed texture is a disc.
 
     Heads read as SOLID high-texture discs; leaves only show texture at thin
-    edges/veins, which can't fill a 5cm+ circle. No morphology, no contours —
-    ring-breaks and attached leaves don't distort the fit.
+    edges/veins, which are stripped via opening to prevent mis-centering.
+    Refined via ring-boundary detection and 3D elevation gating.
     """
     if valid.sum() < 1000:
         return []
@@ -76,20 +81,25 @@ def find_heads(z_mm, i, valid, px_mm=PX_MM):
     tex[~valid] = 0
     texbin = (tex > TEX_THR).astype(np.float32)
 
+    # Strip thin 1-2px leaf boundary outlines so they don't drag centers onto foliage
+    k_clean = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    texbin_clean = cv2.morphologyEx((texbin > 0).astype(np.uint8), cv2.MORPH_OPEN, k_clean).astype(np.float32)
+
     r_min = int(MIN_DIA_MM / 2 / px_mm)
-    r_max = int(min(MAX_DIA_MM, 200.0) / 2 / px_mm)   # discs top out well under 20cm
+    r_max = int(min(MAX_DIA_MM, 220.0) / 2 / px_mm)   # discs top out well under 22cm
     best_r = np.zeros(texbin.shape, np.float32)
     best_fill = np.zeros(texbin.shape, np.float32)
     for r in range(r_min, r_max + 1, 8):
         kern = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * r + 1, 2 * r + 1)).astype(np.float32)
         kern /= kern.sum()
         # constant border: reflected borders fake texture beyond the image edge
-        fill = cv2.filter2D(texbin, -1, kern, borderType=cv2.BORDER_CONSTANT)
+        fill = cv2.filter2D(texbin_clean, -1, kern, borderType=cv2.BORDER_CONSTANT)
         sel = fill >= FILL_THR
         best_r[sel] = r                     # increasing r: keeps the largest passing radius
         best_fill[sel] = fill[sel]
 
-    bg_z = np.nanmedian(z_mm)
+    valid_z = z_mm[valid]
+    bg_z = float(np.percentile(valid_z, 20)) if len(valid_z) else 0.0
     heads = []
     br = best_r.copy()
     while len(heads) < MAX_HEADS:
@@ -98,8 +108,18 @@ def find_heads(z_mm, i, valid, px_mm=PX_MM):
             break
         # among all pixels supporting radius r, center on the best-filled one
         cy_i, cx_i = np.unravel_index(int((best_fill * (br == r)).argmax()), br.shape)
+
+        # Refine center to local centroid within radius r to center precisely on disc
+        y0, y1 = max(cy_i - int(r), 0), min(cy_i + int(r) + 1, texbin.shape[0])
+        x0, x1 = max(cx_i - int(r), 0), min(cx_i + int(r) + 1, texbin.shape[1])
+        patch = texbin_clean[y0:y1, x0:x1]
+        if patch.sum() > 20:
+            yy, xx = np.ogrid[y0:y1, x0:x1]
+            cx_i = int(round((xx * patch).sum() / patch.sum()))
+            cy_i = int(round((yy * patch).sum() / patch.sum()))
+
         cv2.circle(br, (int(cx_i), int(cy_i)), int(2.5 * r), 0, -1)  # suppress neighborhood
-        r = _refine_radius(texbin, int(cx_i), int(cy_i), int(r))
+        r = _refine_radius(texbin, int(cx_i), int(cy_i), int(r), step=16, r_min=r_min)
         circ = np.zeros(texbin.shape, np.uint8)
         cv2.circle(circ, (int(cx_i), int(cy_i)), max(int(0.85 * r), 1), 1, -1)
         in_circ = circ > 0
@@ -114,7 +134,7 @@ def find_heads(z_mm, i, valid, px_mm=PX_MM):
             "dia_mm": 2 * r * px_mm,                # matched-filter circle = disc diameter
             "valid_frac": valid_frac, "tex_in": tex_in,
             "height_mm": mean_h, "truncated": truncated,
-            "accepted": valid_frac >= 0.70 and tex_in >= MIN_MEAN_TEX,
+            "accepted": (valid_frac >= 0.70 and tex_in >= MIN_MEAN_TEX and (mean_h >= 50.0 or 2 * r * px_mm >= 150.0)),
             "_circle": (int(cx_i), int(cy_i), int(r)),
         })
     return heads
