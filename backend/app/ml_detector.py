@@ -10,6 +10,8 @@ import numpy as np
 import rec_reader as rr
 import detect
 
+CURATED_ONNX = Path(__file__).resolve().parent.parent.parent / "data" / "models" / "sunflower_curated_yolov8n.onnx"
+CURATED_PT = Path(__file__).resolve().parent.parent.parent / "data" / "models" / "sunflower_curated_yolov8n.pt"
 DEFAULT_SEG_WEIGHTS = Path(__file__).resolve().parent.parent.parent / "data" / "models" / "sunflower_yolov8n_seg.onnx"
 FALLBACK_SEG_PT = Path(__file__).resolve().parent.parent.parent / "data" / "models" / "sunflower_yolov8n_seg.pt"
 FALLBACK_DETECT_ONNX = Path(__file__).resolve().parent.parent.parent / "data" / "models" / "sunflower_yolov8n.onnx"
@@ -18,12 +20,12 @@ _MODEL = None
 
 
 def get_detector():
-    """Singleton getter for YOLO segmentation model."""
+    """Singleton getter for YOLO model (prioritizes human-curated model)."""
     global _MODEL
     if _MODEL is not None:
         return _MODEL
 
-    for path in [DEFAULT_SEG_WEIGHTS, FALLBACK_SEG_PT, FALLBACK_DETECT_ONNX]:
+    for path in [CURATED_ONNX, CURATED_PT, DEFAULT_SEG_WEIGHTS, FALLBACK_SEG_PT, FALLBACK_DETECT_ONNX]:
         if path.exists():
             try:
                 from ultralytics import YOLO
