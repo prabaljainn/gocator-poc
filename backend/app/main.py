@@ -265,4 +265,7 @@ if _dist.is_dir():
         f = _dist / path
         if path and f.is_file():
             return FileResponse(f)
-        return FileResponse(_dist / "index.html")
+        return FileResponse(
+            _dist / "index.html",
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"}
+        )
