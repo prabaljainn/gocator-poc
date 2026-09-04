@@ -116,9 +116,9 @@ class Store:
         errs = [r["ours_mm"] - r["caliper_mm"] for r in paired]
         stats = {"n": len(paired), "unmatched": len(rows) - len(paired)}
         if errs:
-            stats |= {
+            stats.update({
                 "mae_mm": sum(abs(e) for e in errs) / len(errs),
                 "bias_mm": sum(errs) / len(errs),
                 "max_abs_err_mm": max(abs(e) for e in errs),
-            }
+            })
         return {"rows": rows, "stats": stats}

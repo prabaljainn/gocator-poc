@@ -213,7 +213,7 @@ def get_session(sid: int):
     s = store.session(sid)
     if not s:
         raise HTTPException(404, "no such session")
-    return s | {"heads": store.heads(sid)}
+    return {**s, "heads": store.heads(sid)}
 
 
 @app.get("/api/sessions/{sid}/heads")

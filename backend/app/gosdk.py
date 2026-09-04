@@ -294,12 +294,12 @@ class GocatorStream:
                     if t == MSG_UNIFORM_SURFACE:
                         h, w = L.GoSurfaceMsg_Length(msg), L.GoSurfaceMsg_Width(msg)
                         z16 = _rows_to_array(msg, h, w, L.GoSurfaceMsg_RowAt, np.int16)
-                        meta |= {
+                        meta.update({
                             "x_res_nm": L.GoSurfaceMsg_XResolution(msg),
                             "y_res_nm": L.GoSurfaceMsg_YResolution(msg),
                             "z_res_nm": L.GoSurfaceMsg_ZResolution(msg),
                             "z_offset_um": L.GoSurfaceMsg_ZOffset(msg),
-                        }
+                        })
                     elif t == MSG_SURFACE_INTENSITY:
                         h = L.GoSurfaceIntensityMsg_Length(msg)
                         w = L.GoSurfaceIntensityMsg_Width(msg)
