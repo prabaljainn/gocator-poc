@@ -18,22 +18,36 @@ FALLBACK_DETECT_ONNX = Path(__file__).resolve().parent.parent.parent / "data" / 
 
 _MODEL = None
 
+# Detection confidence, tunable at runtime from the Control tab.
+CONF_THR = 0.40
+
+
+CANDIDATES = [CURATED_ONNX, CURATED_PT, DEFAULT_SEG_WEIGHTS, FALLBACK_SEG_PT, FALLBACK_DETECT_ONNX]
+_MODEL_PATH = None
+_RETIRED = set()
+
 
 def get_detector():
-    """Singleton getter for YOLO model (prioritizes human-curated model)."""
-    global _MODEL
+    """Singleton getter. Candidates are tried in order; ones that have already
+    failed at inference on this machine are skipped (see find_heads)."""
+    global _MODEL, _MODEL_PATH
     if _MODEL is not None:
         return _MODEL
 
-    for path in [CURATED_ONNX, CURATED_PT, DEFAULT_SEG_WEIGHTS, FALLBACK_SEG_PT, FALLBACK_DETECT_ONNX]:
-        if path.exists():
-            try:
-                from ultralytics import YOLO
-                _MODEL = YOLO(str(path))
-                return _MODEL
-            except Exception as e:
-                print(f"Warning: failed loading {path} ({e})")
+    for path in CANDIDATES:
+        if path in _RETIRED or not path.exists():
+            continue
+        try:
+            from ultralytics import YOLO
+            _MODEL = YOLO(str(path))
+            _MODEL_PATH = path
+            print(f"ml_detector: using {path.name}")
+            return _MODEL
+        except Exception as e:
+            print(f"ml_detector: {path.name} would not load ({type(e).__name__}: {e})")
+            _RETIRED.add(path)
 
+    print("ml_detector: no usable model, falling back to the classical detector")
     return None
 
 
@@ -58,8 +72,11 @@ def make_fused_image(z_mm, i, valid):
     return cv2.merge([ch0, ch1, ch2]), bg_z
 
 
-def find_heads(z_mm, i, valid, px_mm=detect.PX_MM, conf_thr=0.40):
+def find_heads(z_mm, i, valid, px_mm=detect.PX_MM, conf_thr=None):
     """Detect and segment sunflower heads using YOLOv8-seg + 3D depth metrology."""
+    global _MODEL
+    if conf_thr is None:
+        conf_thr = CONF_THR
     model = get_detector()
     if model is None:
         return detect.find_heads(z_mm, i, valid, px_mm)
@@ -70,7 +87,20 @@ def find_heads(z_mm, i, valid, px_mm=detect.PX_MM, conf_thr=0.40):
     img_fused, bg_z = make_fused_image(z_mm, i, valid)
     h_img, w_img = img_fused.shape[:2]
 
-    results = model(img_fused, conf=conf_thr, verbose=False)
+    try:
+        results = model(img_fused, conf=conf_thr, verbose=False)
+    except Exception as e:
+        # Ultralytics defers the backend import to the first predict, so an .onnx
+        # on a box with no onnxruntime loads fine and only dies here, mid-frame.
+        # Retire that candidate and fall through to the next one. Validating up
+        # front with a synthetic probe was the obvious alternative, but the probe
+        # left the ONNX path ~8x slower on the Spark for the rest of the process.
+        print(f"ml_detector: {_MODEL_PATH.name} failed at inference "
+              f"({type(e).__name__}: {e}); retiring it")
+        _RETIRED.add(_MODEL_PATH)
+        _MODEL = None
+        return find_heads(z_mm, i, valid, px_mm, conf_thr)
+
     if not results or len(results[0].boxes) == 0:
         return []
 
@@ -128,7 +158,13 @@ def find_heads(z_mm, i, valid, px_mm=detect.PX_MM, conf_thr=0.40):
             "tex_in": 1.0,
             "height_mm": mean_h,
             "truncated": truncated,
-            "accepted": True,
+            # Mirror detect.find_heads' accept gate, minus the texture term: this
+            # path has no texture measure (tex_in is a placeholder 1.0 below), and
+            # applying MIN_MEAN_TEX literally would reject every detection. No
+            # diameter floor either — the model was trained on human boxes spanning
+            # 21-62 mm, so a 32 mm cut would contradict its own labels. Settle what
+            # "diameter" means before adding one.
+            "accepted": bool(valid_frac >= 0.70 and (mean_h >= 50.0 or dia_mm >= 150.0)),
             "_circle": (int(cx_i), int(cy_i), int(r_refined)),
             "_conf": float(conf)
         })
