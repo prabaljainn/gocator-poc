@@ -117,32 +117,87 @@ class LiveSource:
     nothing at all.
     """
 
-    def __init__(self, ip: str = "192.168.1.10", timeout_us: int = 20_000_000):
+    def __init__(self, ip: str = "192.168.1.10", timeout_us: int = 20_000_000,
+                 limit: int | None = None, reconnect: bool = True,
+                 retry_wait: float = 3.0, max_retries: int | None = None):
         self.ip = ip
         self.timeout_us = timeout_us
+        self.limit = limit
+        self.reconnect = reconnect
+        self.retry_wait = retry_wait
+        self.max_retries = max_retries   # None = keep trying until the session stops
         self._seen = 0
         self._connected = False
         self._detail = ip
         self._stream = None
+        self._attempt = 0
+        self._last_error: str | None = None
+        self._should_stop = lambda: False
+
+    def set_stop_check(self, fn) -> None:
+        """SessionRunner hands us its stop flag so a retry backoff doesn't outlive
+        a stop() request."""
+        self._should_stop = fn
+
+    def _sleep_interruptibly(self, seconds: float) -> bool:
+        """Returns False if we were asked to stop while waiting."""
+        waited = 0.0
+        while waited < seconds:
+            if self._should_stop():
+                return False
+            time.sleep(0.25)
+            waited += 0.25
+        return True
 
     def frames(self) -> Iterator[Frame]:
         from .gosdk import GocatorStream  # imported lazily: needs the built SDK
 
-        with GocatorStream(self.ip, self.timeout_us) as stream:
-            self._stream, self._connected = stream, True
-            self._detail = f"{self.ip} (surface {stream.meta.get('surface_length_mm')}mm)"
+        idx = 0
+        while True:
             try:
-                for i, (z16, inten, meta) in enumerate(stream.frames()):
-                    if inten is None:
-                        # the detector keys entirely on intensity texture
-                        raise RuntimeError(
-                            "sensor sent no intensity — enable Surface Intensity output "
-                            f"(gosdk meta: {meta.get('intensity_source_error')})")
-                    self._seen = i + 1
-                    yield Frame(idx=i, z16=z16, intensity=inten, t_wall=time.time(),
-                                dx_mm=meta["x_res_nm"] / 1e6, dy_mm=meta["y_res_nm"] / 1e6)
-            finally:
-                self._connected = False
+                with GocatorStream(self.ip, self.timeout_us) as stream:
+                    self._stream, self._connected = stream, True
+                    self._attempt, self._last_error = 0, None
+                    self._detail = f"{self.ip} (surface {stream.meta.get('surface_length_mm')}mm)"
+                    try:
+                        for z16, inten, meta in stream.frames():
+                            if inten is None:
+                                # the detector keys entirely on intensity texture
+                                raise RuntimeError(
+                                    "sensor sent no intensity — enable Surface Intensity output "
+                                    f"(gosdk meta: {meta.get('intensity_source_error')})")
+                            self._seen = idx + 1
+                            yield Frame(idx=idx, z16=z16, intensity=inten, t_wall=time.time(),
+                                        dx_mm=meta["x_res_nm"] / 1e6, dy_mm=meta["y_res_nm"] / 1e6)
+                            idx += 1
+                            # A live stream never ends on its own; without this a session
+                            # started with a limit runs until someone stops it.
+                            if self.limit is not None and idx >= self.limit:
+                                return
+                    finally:
+                        self._connected = False
+            except GeneratorExit:
+                raise
+            except Exception as e:
+                # A cable pull surfaces here as GoSystem_ReceiveData kStatus -993.
+                # Frames already yielded are on disk (D5); losing the rest of a field
+                # pass because someone knocked a connector is the worse outcome.
+                if self._should_stop():
+                    # A stop landing while we were inside an SDK call is not a
+                    # failure; re-raising here marked user-stopped sessions "error".
+                    return
+                if not self.reconnect:
+                    raise
+                if self.max_retries is not None and self._attempt >= self.max_retries:
+                    raise
+                self._attempt += 1
+                self._last_error = f"{type(e).__name__}: {e}"
+                self._detail = (f"{self.ip} — reconnecting (attempt {self._attempt}): "
+                                f"{self._last_error}")
+                if not self._sleep_interruptibly(self.retry_wait):
+                    return
+                # idx deliberately keeps counting: restarting at 0 would overwrite
+                # the frames already recorded for this session.
 
     def health(self) -> SourceHealth:
         return SourceHealth(kind="live", connected=self._connected,

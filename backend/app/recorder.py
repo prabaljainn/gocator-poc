@@ -41,6 +41,12 @@ class Recorder:
     def _write_meta(self) -> None:
         (self.dir / "meta.json").write_text(json.dumps(self.meta, indent=2))
 
+    def update_meta(self, **kw) -> None:
+        """Overwrite meta fields mid-session — live frames only report their real
+        spacing once the first surface arrives."""
+        self.meta.update(kw)
+        self._write_meta()
+
     def save_raw(self, idx: int, z16: np.ndarray, intensity: np.ndarray) -> Path:
         """Called before detection. Compressed npz keeps a field pass near 1-2 GB."""
         p = self.dir / "frames" / f"{idx:06d}.npz"

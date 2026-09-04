@@ -27,6 +27,7 @@ class SessionRunner:
     def __init__(self, store: Store, source: FrameSource, data_root: Path,
                  name: str, mode: str, notes: str = "", on_event=None, fps: float = 2.0):
         self.store, self.source = store, source
+        self.mode = mode
         self.on_event = on_event or (lambda *_: None)
         self.recorder = Recorder(data_root / "sessions", name, meta={
             "mode": mode,
@@ -80,6 +81,9 @@ class SessionRunner:
     def _run(self) -> None:
         state = "done"
         try:
+            # a live source backs off between reconnect attempts; let it see stop()
+            if hasattr(self.source, "set_stop_check"):
+                self.source.set_stop_check(self._stop.is_set)
             for frame in self.source.frames():
                 if self._stop.is_set():
                     state = "stopped"
@@ -108,7 +112,15 @@ class SessionRunner:
                     z_mm, inten, valid, px_mm = detect.preprocess(
                         frame.z16, frame.intensity,
                         **{k: v for k, v in (("dx_mm", frame.dx_mm),
-                                             ("dy_mm", frame.dy_mm)) if v})
+                                             ("dy_mm", frame.dy_mm)) if v is not None})
+                    if self.frames_done == 0 and frame.dx_mm is not None:
+                        # meta was seeded with rec_reader's Tobetsu constants; a live
+                        # sensor reports its own spacing and it differs (0.1278 vs
+                        # 0.1240 mm/px observed). Invariant 2 converts diameters via
+                        # X spacing, so the recorded value has to be the real one.
+                        self.recorder.update_meta(x_spacing_mm=frame.dx_mm,
+                                                  y_spacing_mm=frame.dy_mm,
+                                                  px_mm_working=px_mm)
                     heads = ml_detector.find_heads(z_mm, inten, valid, px_mm)
                     self.recorder.save_overlay(frame.idx, detect.overlay(inten, heads))
                     # numpy scalars aren't JSON-serialisable; without this the first
@@ -130,8 +142,10 @@ class SessionRunner:
                     self.store.set_frame_status(fid, "failed", err)
                 self.frames_done += 1
 
-                # Dynamic FPS pacing (0 = max speed/uncapped)
-                if self.fps > 0:
+                # Dynamic FPS pacing (0 = max speed/uncapped). Never for live: the
+                # sensor sets the rate, and sleeping here would back frames up in the
+                # SDK buffer instead of slowing anything down.
+                if self.fps > 0 and self.mode != "live":
                     elapsed = time.time() - t_start
                     delay = (1.0 / self.fps) - elapsed
                     if delay > 0:
@@ -140,6 +154,9 @@ class SessionRunner:
                             if self._pause.is_set():
                                 break
                             time.sleep(min(0.03, max(0.001, t_end - time.time())))
+            # a source may also end cleanly *because* we asked it to stop
+            if self._stop.is_set():
+                state = "stopped"
         except Exception:
             self.error = traceback.format_exc(limit=5)
             state = "error"

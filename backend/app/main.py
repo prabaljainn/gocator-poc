@@ -149,7 +149,7 @@ def start_session(req: StartSession):
             raise HTTPException(404, f"no such session dir: {req.source}")
         src = SessionSource(d)
     elif req.mode == "live":
-        src = LiveSource(req.source or SENSOR_IP)
+        src = LiveSource(req.source or SENSOR_IP, limit=req.limit)
     else:
         raise HTTPException(400, f"unsupported mode {req.mode!r}")
     name = f"{datetime.now().strftime('%Y-%m-%d_%H%M%S')}_{req.mode}"
