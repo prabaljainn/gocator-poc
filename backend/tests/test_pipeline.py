@@ -16,6 +16,15 @@ from backend.app.pipeline import SessionRunner  # noqa: E402
 from backend.app.recorder import Recorder  # noqa: E402
 from backend.app.sources import Frame, SessionSource, SourceHealth  # noqa: E402
 from backend.app.store import Store  # noqa: E402
+from backend.app import ml_detector  # noqa: E402
+
+# These tests exercise pipeline plumbing (record -> detect -> store -> WS), not
+# model accuracy. The pipeline calls ml_detector.find_heads, which delegates to
+# detect.find_heads when no model loads — so pin it there. Otherwise the result
+# depends on whether ultralytics happens to be installed: the Mac has no
+# ultralytics and passes, while the Spark and Jetson run YOLO against a synthetic
+# disc it was never trained on and find nothing.
+ml_detector.get_detector = lambda: None  # noqa: E305
 
 # raw px are anisotropic and sub-mm, so the canvas must be sized in mm, not px:
 # a 100 mm disc spans ~800 raw px in X. Same geometry as detect.py --selftest.
@@ -30,7 +39,10 @@ def _synthetic_frame(idx: int) -> Frame:
     yy, xx = np.ogrid[:H, :W]
     disc = (((xx - W // 2) * rr.DX_MM) ** 2
             + ((yy - H // 2) * rr.DY_MM) ** 2) <= (DISC_DIA_MM / 2) ** 2
-    z16[disc] = 5000
+    # Stand the disc ~82 mm proud of the ground. ZRES_MM is ~0.0069, so the old
+    # 5000 gave only 27 mm of relief and find_heads rejected it on the
+    # `mean_h >= 50` accept gate — a real head on a stalk clears that easily.
+    z16[disc] = 13000
     inten[disc] = np.random.default_rng(idx).integers(40, 240, int(disc.sum()), dtype=np.uint8)
     return Frame(idx=idx, z16=z16, intensity=inten, t_wall=0.0)
 
