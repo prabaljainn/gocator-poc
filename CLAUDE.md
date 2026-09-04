@@ -36,7 +36,12 @@ Python via `.venv` (numpy, scipy, opencv-python-headless, pillow). Homebrew pyth
 2. **Diameters convert via X spacing only** (0.124 mm/px raw; Y is time-triggered and untrusted — D3).
 3. `.rec` Z rasters are **big-endian** int16; header fields are little-endian. Ring-banding artifacts = wrong byte order.
 4. `0x8000` is invalid-Z, not data.
-5. Detector changes must keep `--selftest` passing and should be verified on the golden replay (55 heads on the Tobetsu file; eyeball `out/review.png`).
+5. Detector changes must keep `--selftest` passing and should be verified on the golden
+   replay. Current numbers on the Tobetsu file (42 frames), reproduced identically on
+   Mac, Spark and Jetson: **classical 68 accepted (91 raw); ML 65 detections, 62
+   accepted**. The older "55 heads" figure predates D-945cae2 and the ML detector.
+   None of these are validated against calipers — treat them as regression baselines,
+   not as correctness. Eyeball `out/review.png`.
 
 ## Gotchas that already cost time
 

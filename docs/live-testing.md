@@ -2,7 +2,21 @@
 
 **Status: live acquisition works end-to-end.** Sensor → GoSDK → recorder → detector → SQLite → dashboard, verified on hardware 2026-08-19 (sessions 15 and 16).
 
-Dashboard: **http://192.168.1.3:8000**
+Dashboard: **http://192.168.1.3:8000** — from a machine on the lab `192.168.1.0/24`.
+
+> There is now a second deployment: the whole POC also runs on the Jetson AGX Orin
+> at **http://192.168.23.101:8000** (replay-only for now). See `docs/setup-jetson.md`.
+
+If the Mac isn't on that subnet (`http://spark-4faa.local:8000` hangs — mDNS resolves
+to 192.168.1.3, which is then unroutable), tunnel instead; it reaches the Spark over
+IPv6 link-local on the same switch regardless of IPv4 addressing:
+
+```bash
+ssh spark            # ~/.ssh/config forwards 8000 → http://localhost:8000
+```
+
+Or put the Mac back on the lab subnet: `sudo ifconfig en9 alias 192.168.1.7 255.255.255.0`
+(also needed to open the sensor's own web UI at http://192.168.1.10/).
 
 ## The one thing that will surprise you
 
