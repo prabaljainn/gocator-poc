@@ -3,6 +3,7 @@ import { Live } from './pages/Live'
 import { Sessions } from './pages/Sessions'
 import { SessionDetail } from './pages/SessionDetail'
 import { Annotate } from './pages/Annotate'
+import { Control } from './pages/Control'
 
 const tab = ({ isActive }: { isActive: boolean }) =>
   `rounded px-3 py-1.5 text-sm ${isActive ? 'bg-seed-500 font-semibold text-soil-900' : 'text-soil-300 hover:bg-soil-800/60'}`
@@ -19,6 +20,7 @@ export default function App() {
             <NavLink to="/" end className={tab}>Live</NavLink>
             <NavLink to="/sessions" className={tab}>Sessions</NavLink>
             <NavLink to="/annotate" className={tab}>Dataset Lab</NavLink>
+            <NavLink to="/control" className={tab}>Control</NavLink>
           </nav>
         </header>
         <main className="flex-1">
@@ -27,6 +29,7 @@ export default function App() {
             <Route path="/sessions" element={<Sessions />} />
             <Route path="/sessions/:id" element={<SessionDetail />} />
             <Route path="/annotate" element={<Annotate />} />
+            <Route path="/control" element={<Control />} />
           </Routes>
         </main>
       </div>

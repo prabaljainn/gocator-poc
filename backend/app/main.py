@@ -22,6 +22,7 @@ from .pipeline import SessionRunner
 from .sources import LiveSource, ReplaySource, SessionSource
 from .store import Store
 from .annotate import router as annotate_router
+from .sensor import router as sensor_router, set_busy_check, reachable
 
 log = logging.getLogger("gocator")
 REPO = Path(__file__).resolve().parents[2]
@@ -32,6 +33,9 @@ app = FastAPI(title="gocator-poc")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"],
                    allow_headers=["*"])  # ponytail: LAN-only tool; add auth if it leaves the bench
 app.include_router(annotate_router)
+app.include_router(sensor_router)
+# the control panel must not open a second SDK connection mid-session
+set_busy_check(lambda: bool(current and current.alive))
 
 store = Store(DATA_ROOT / "gocator.sqlite")
 current: SessionRunner | None = None
@@ -264,7 +268,9 @@ def health():
         "source": current.source.health().__dict__ if current else None,
         "disk_free_gb": round(du.free / 1e9, 1),
         "sensor_ip": SENSOR_IP,
+        # can we do live at all (SDK present) vs is the sensor actually there
         "live_acquisition": _gosdk_available(),
+        "sensor_reachable": reachable(),
     }
 
 
