@@ -14,3 +14,6 @@ __pycache__/
 data/
 node_modules/
 frontend/dist/
+
+# Vendor SDK archive (LMI emulator, ~900 MB) — keep local, see .gitattributes for the LFS rule
+*.zip
